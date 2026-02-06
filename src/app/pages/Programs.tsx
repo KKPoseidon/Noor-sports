@@ -5,7 +5,7 @@ import { useState } from 'react';
 import heroBackground from "../../assets/programshero.png";
 import teamPhoto1 from "../../assets/team1.png";
 import teamPhoto2 from "../../assets/team2.png";
-import teamPhoto3 from "../../team3.png";
+import teamPhoto3 from "../../assets/team3.png";
 
 export function Programs() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
