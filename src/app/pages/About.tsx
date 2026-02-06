@@ -1,14 +1,14 @@
 import { motion, useScroll, useTransform } from 'motion/react';
 import { useState, useRef } from 'react';
 import { Heart, Users, Trophy, Sparkles, Calendar } from 'lucide-react';
-import communityImg1 from 'figma:asset/e1ee72db19ca7d7838d8e799b2e89986f0711981.png';
-import communityImg2 from 'figma:asset/156de2a88e987a0c2021bac9b0cab593803b06d0.png';
-import heroBackground from 'figma:asset/f40791dfa4617a27730f66ef043a3dd278566d27.png';
-import pillarImg1 from 'figma:asset/d64587ca9e66b952d4b4a3d00b1b1a747dc95e35.png';
-import pillarImg3 from 'figma:asset/8f431056629eea545ee307df5b7e74b2d080875d.png';
-import safeEnvImg from 'figma:asset/116f63131a9b52385c96b262e501900f3497bdd2.png';
-import athleticDevImg from 'figma:asset/91852b71f58d81e76bc6b85265bd9cb0001ba31c.png';
-import seasonCelebrationsImg from 'figma:asset/8c93caf855cdfef1ccd9db7d1e1750a3e5b486cb.png';
+import communityImg1 from "../../assets/community1.png";
+import communityImg2 from "../../assets/community2.png";
+import heroBackground from "../../assets/abouthero.png";
+import pillarImg1 from "../../assets/pillar1.png";
+import pillarImg3 from "../../assets/pillar3.png";
+import safeEnvImg from "../../assets/safeenv.png";
+import athleticDevImg from "../../assets/athleticdev.png";
+import seasonCelebrationsImg from "../../assets/celebration.png";
 
 export function About() {
   const [hoveredCard, setHoveredCard] = useState<number | null>(null);

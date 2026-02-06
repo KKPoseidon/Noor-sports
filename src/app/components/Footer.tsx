@@ -1,7 +1,7 @@
 import { Link } from 'react-router';
 import { Instagram, Facebook, Mail, MapPin, Phone } from 'lucide-react';
 import { motion } from 'motion/react';
-import logo from 'figma:asset/263af313fae8d2ee9ec8db5424961ace0584d144.png';
+import logo from "../../assets/logo.png";
 
 export function Footer() {
   return (

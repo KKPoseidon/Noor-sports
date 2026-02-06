@@ -2,10 +2,10 @@ import { Link } from 'react-router';
 import { motion } from 'motion/react';
 import { ArrowRight, MapPin, Heart, Trophy } from 'lucide-react';
 import { useState } from 'react';
-import heroBackground from 'figma:asset/7cba33ba2432ff081f2077b687ce447b3b4cd8f2.png';
-import teamPhoto1 from 'figma:asset/cfad9dc392ab10e6ac66c611601bc99a75338413.png';
-import teamPhoto2 from 'figma:asset/b411fd244aa457eb574e8a5ac3d1b9d3c1cdcff3.png';
-import teamPhoto3 from 'figma:asset/9fe90dcf36039f7b6bb4afe35c7066b4df0e7a40.png';
+import heroBackground from "../../assets/programshero.png";
+import teamPhoto1 from "../../assets/team1.png";
+import teamPhoto2 from "../../assets/team2.png";
+import teamPhoto3 from "../../team3.png";
 
 export function Programs() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);

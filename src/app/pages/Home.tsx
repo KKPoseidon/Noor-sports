@@ -2,16 +2,16 @@ import { Link } from 'react-router';
 import { motion } from 'motion/react';
 import { ArrowRight, Award, Heart, Zap } from 'lucide-react';
 import { useState, useEffect } from 'react';
-import heroImage1 from 'figma:asset/e51c93d80638712f85b81bfe864d5375720ff198.png';
-import heroImage2 from 'figma:asset/79062b3039f099ebc5ccb5e92b1996bb736fb4be.png';
-import heroImage5 from 'figma:asset/f008ae9cee6c049e9dbe5e6c9642a6ac5646a89b.png';
-import heroImage6 from 'figma:asset/cf78a124394450ad1086a0c577a58cf54de2e04a.png';
-import heroImage7 from 'figma:asset/188fa0a9c28bde98e25bc5c580338de9624edbb6.png';
-import heroImage8 from 'figma:asset/f44df5b4676ee753d1db7bb2eba6a24fa3a2f7b1.png';
-import missionImage from 'figma:asset/b411fd244aa457eb574e8a5ac3d1b9d3c1cdcff3.png';
-import philosophyImage1 from 'figma:asset/67f17b7a699b3b6e90e02385a39954b603da0ce6.png';
-import happinessImage from 'figma:asset/0ba682073e68c090b98e531ab20d6fc11ec5ed64.png';
-import philosophyImage3 from 'figma:asset/efc9b9f57a1936609945595ab1dc9ee385cc1aba.png';
+import heroImage1 from "../../assets/hero1.png";
+import heroImage2 from "../../assets/hero2.png";
+import heroImage5 from "../../assets/hero3.png";
+import heroImage6 from "../../assets/hero4.png";
+import heroImage7 from "../../assets/hero5.png";
+import heroImage8 from "../../assets/hero6.png";
+import missionImage from "../../assets/team2.png";
+import philosophyImage1 from "../../assets/philosophy.png";
+import happinessImage from "../../assets/happiness.png";
+import philosophyImage3 from "../../assets/excitement.png";
 
 export function Home() {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
