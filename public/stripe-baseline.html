@@ -1,0 +1,3 @@
+<!doctype html><html><head><title>Stripe baseline</title><script src="https://js.stripe.com/v3/"></script></head><body><h1>Standard Stripe card field</h1><p id="status">Loading</p><div id="card"></div><script>
+const stripe=Stripe("pk_live_51UCpqyJEH6HJ9NgaR3dnzbFgbS50jOS9Lhj2MKjcLsgFm6Grpfm3rPWTJYrvQS54j1wv9v8OI9X5Hk8UWAbu8Yld00aL5Cos2v");const card=stripe.elements().create('card');card.on('ready',()=>document.querySelector('#status').textContent='Ready');card.mount('#card');
+</script></body></html>
