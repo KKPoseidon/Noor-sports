@@ -86,10 +86,10 @@ export function Contact() {
                         Phone
                       </div>
                       <a
-                        href="tel:+16195004370"
+                        href="tel:+14093336619"
                         className="text-lg text-[#0066CC] hover:text-[#004C97] transition-colors"
                       >
-                        +1 (619) 500-4370
+                        +1 (409) 333-6619
                       </a>
                     </div>
                   </div>
