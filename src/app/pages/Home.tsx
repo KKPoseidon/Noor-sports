@@ -80,7 +80,7 @@ export function Home() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.8, delay: 0.6 }}
             >
-              <Link to="/programs">
+              <Link to="/register">
                 <motion.div
                   className="inline-flex items-center gap-3 bg-gradient-to-r from-[#00BFFF] to-[#0099E6] text-white px-10 py-5 text-sm tracking-tight relative overflow-hidden group cursor-pointer rounded-full shadow-[0_10px_40px_rgba(0,191,255,0.4)]"
                   whileHover={{ 
@@ -112,7 +112,7 @@ export function Home() {
                   />
                   
                   {/* Button content */}
-                  <span className="relative z-10 font-bold">Learn More</span>
+                  <span className="relative z-10 font-bold">REGISTER NOW!</span>
                   <motion.div
                     className="relative z-10"
                     animate={{ x: [0, 5, 0] }}
