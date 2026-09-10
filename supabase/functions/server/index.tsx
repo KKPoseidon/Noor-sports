@@ -29,6 +29,39 @@ function stripeAuth(): string {
   return "Basic " + btoa(key + ":");
 }
 
+const STANDARD_PROGRAM_AMOUNT = 39700;
+const PAYMENT_DISCOUNT = 1200;
+const PROGRAM_CODE = "fall-2026-soccer-camp";
+
+function paymentQuote(paymentMethodType: string, cardFunding?: string) {
+  const isBank = paymentMethodType === "us_bank_account";
+  const isDebit = paymentMethodType === "card" && cardFunding === "debit";
+  const discount = isBank || isDebit ? PAYMENT_DISCOUNT : 0;
+  return {
+    paymentMethodType,
+    cardFunding: cardFunding ?? null,
+    programAmount: STANDARD_PROGRAM_AMOUNT,
+    discount,
+    discountLabel: isBank ? "Bank Payment Discount" : isDebit ? "Debit Payment Discount" : null,
+    total: STANDARD_PROGRAM_AMOUNT - discount,
+  };
+}
+
+
+// A unique KV key binds concurrent confirmation requests to one token.
+// Keep it on ambiguous network errors so retries cannot switch payment methods.
+async function claimConfirmation(paymentIntentId: string, tokenId: string) {
+  const key = `payment-confirmation:${paymentIntentId}`;
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  const res = await fetch(`${Deno.env.get("SUPABASE_URL")}/rest/v1/kv_store_e11bef9e`, {
+    method: "POST",
+    headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+    body: JSON.stringify({ key, value: { tokenId } }),
+  });
+  if (res.ok) return true;
+  if (res.status !== 409) throw new Error("Could not reserve payment confirmation. Please retry.");
+  return (await kv.get(key))?.tokenId === tokenId;
+}
 
 // ── Stripe webhook verification ───────────────────────────────────────────────
 
@@ -144,23 +177,8 @@ app.post("/make-server-e11bef9e/associate-payment", async (c) => {
 app.post("/make-server-e11bef9e/create-payment-intent", async (c) => {
   try {
     const auth = stripeAuth();
+    const quote = paymentQuote("card", "unknown");
 
-    // Look up the amount from the Price so it stays in sync with Stripe dashboard
-    const priceRes = await fetch(
-      "https://api.stripe.com/v1/prices/price_1UE37gJEH6HJ9NgaTvDGMkiZ",
-      { headers: { Authorization: auth } },
-    );
-    const price = await priceRes.json();
-    if (price.error) throw new Error(price.error.message);
-
-    if (!priceRes.ok || !price.active || price.unit_amount !== 38500 || price.currency !== "usd" || price.type !== "one_time") {
-      throw new Error("Payment blocked: the configured Stripe price must be active, one-time, and exactly $385.00 USD.");
-    }
-
-    const amount = 38500;
-    const currency = "usd";
-
-    // Create the PaymentIntent
     const piRes = await fetch("https://api.stripe.com/v1/payment_intents", {
       method: "POST",
       headers: {
@@ -168,17 +186,125 @@ app.post("/make-server-e11bef9e/create-payment-intent", async (c) => {
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: new URLSearchParams({
-        amount: String(amount),
-        currency,
-        "automatic_payment_methods[enabled]": "true",
+        amount: String(STANDARD_PROGRAM_AMOUNT),
+        currency: "usd",
+        confirmation_method: "manual",
+        "payment_method_types[0]": "card",
+        "payment_method_types[1]": "us_bank_account",
+        "metadata[programCode]": PROGRAM_CODE,
+        "metadata[standardProgramAmount]": String(STANDARD_PROGRAM_AMOUNT),
+        "metadata[paymentDiscount]": "0",
       }).toString(),
     });
     const pi = await piRes.json();
     if (pi.error) throw new Error(pi.error.message);
 
-    return c.json({ success: true, clientSecret: pi.client_secret, paymentIntentId: pi.id });
+    return c.json({ success: true, clientSecret: pi.client_secret, paymentIntentId: pi.id, quote });
   } catch (err) {
     console.error("Stripe PaymentIntent error:", err);
+    return c.json({ success: false, error: (err as Error).message }, 500);
+  }
+});
+
+// Inspect Stripe's tokenized payment details, apply any eligible discount, and
+// confirm the Intent. The browser never decides the final amount.
+app.post("/make-server-e11bef9e/confirm-payment", async (c) => {
+  try {
+    const auth = stripeAuth();
+    const body = await c.req.json();
+    const paymentIntentId = typeof body.paymentIntentId === "string" ? body.paymentIntentId : "";
+    const confirmationTokenId = typeof body.confirmationTokenId === "string" ? body.confirmationTokenId : "";
+    if (!paymentIntentId.startsWith("pi_") || !confirmationTokenId.startsWith("ctoken_")) {
+      return c.json({ success: false, error: "Invalid payment confirmation." }, 400);
+    }
+
+    const stripeHeaders = { Authorization: auth, "Stripe-Version": "2025-10-29.clover" };
+    const [currentRes, tokenRes] = await Promise.all([
+      fetch(`https://api.stripe.com/v1/payment_intents/${encodeURIComponent(paymentIntentId)}`, { headers: stripeHeaders }),
+      fetch(`https://api.stripe.com/v1/confirmation_tokens/${encodeURIComponent(confirmationTokenId)}`, { headers: stripeHeaders }),
+    ]);
+    const current = await currentRes.json();
+    const token = await tokenRes.json();
+    if (!currentRes.ok || current.error) throw new Error(current.error?.message ?? "Could not load payment.");
+    if (!tokenRes.ok || token.error) throw new Error(token.error?.message ?? "Could not verify payment details.");
+    if (current.metadata?.programCode !== PROGRAM_CODE || current.currency !== "usd") {
+      return c.json({ success: false, error: "Payment does not belong to this program." }, 403);
+    }
+    const reviewKey = `payment-review:${paymentIntentId}:${confirmationTokenId}`;
+    const review = await kv.get(reviewKey);
+    if (body.finalize === true && (!review || body.expectedTotal !== review.quote.total)) {
+      return c.json({ success: false, error: "Review your payment total before confirming." }, 409);
+    }
+    if (current.confirmation_method !== "manual") {
+      return c.json({ success: false, error: "Please reload checkout to use the updated pricing." }, 409);
+    }
+    if (body.finalize === true && ["succeeded", "processing", "requires_action"].includes(current.status)) {
+      if (current.metadata?.confirmationTokenId !== confirmationTokenId) {
+        return c.json({ success: false, error: "Payment is already being confirmed with another method." }, 409);
+      }
+      return c.json({ success: true, quote: review.quote, status: current.status, clientSecret: current.client_secret });
+    }
+    const afterAuthentication = current.status === "requires_confirmation" && current.metadata?.confirmationTokenId === confirmationTokenId;
+    if (current.status !== "requires_payment_method" && !afterAuthentication) {
+      return c.json({ success: false, error: "This payment can no longer be updated." }, 409);
+    }
+    if (!current.metadata?.registrationId) {
+      return c.json({ success: false, error: "Save registration before reviewing payment." }, 409);
+    }
+    if (!afterAuthentication && (token.expires_at * 1000 <= Date.now() || token.payment_intent)) {
+      return c.json({ success: false, error: "Payment details expired or were already used. Choose Change payment method and review again." }, 409);
+    }
+
+    const preview = token.payment_method_preview;
+    const paymentMethodType = preview?.type ?? "unknown";
+    if (!["card", "us_bank_account"].includes(paymentMethodType)) {
+      return c.json({ success: false, error: "This payment method is not available." }, 400);
+    }
+    const cardFunding = paymentMethodType === "card" ? preview?.card?.funding ?? "unknown" : undefined;
+    const quote = paymentQuote(paymentMethodType, cardFunding);
+    if (body.finalize !== true) {
+      await kv.set(reviewKey, { quote, registrationId: current.metadata.registrationId });
+      return c.json({ success: true, quote, status: "prepared" });
+    }
+    if (quote.total !== review.quote.total || review.registrationId !== current.metadata.registrationId) {
+      return c.json({ success: false, error: "Payment details changed. Review your total again." }, 409);
+    }
+    if (!(await claimConfirmation(paymentIntentId, confirmationTokenId))) {
+      return c.json({ success: false, error: "Another payment confirmation is in progress. Retry the original payment or contact Noor Sports." }, 409);
+    }
+    if (!afterAuthentication) {
+    const updateRes = await fetch(`https://api.stripe.com/v1/payment_intents/${encodeURIComponent(paymentIntentId)}`, {
+      method: "POST",
+      headers: { ...stripeHeaders, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        amount: String(quote.total),
+        "metadata[confirmationTokenId]": confirmationTokenId,
+        "metadata[paymentMethodType]": paymentMethodType,
+        "metadata[cardFunding]": cardFunding ?? "",
+        "metadata[paymentDiscount]": String(quote.discount),
+        "metadata[discountLabel]": quote.discountLabel ?? "",
+        receipt_email: preview?.billing_details?.email ?? "",
+      }).toString(),
+    });
+    const updated = await updateRes.json();
+    if (!updateRes.ok || updated.error) throw new Error(updated.error?.message ?? "Could not apply payment total.");
+    }
+
+    const confirmRes = await fetch(`https://api.stripe.com/v1/payment_intents/${encodeURIComponent(paymentIntentId)}/confirm`, {
+      method: "POST",
+      headers: { ...stripeHeaders, "Content-Type": "application/x-www-form-urlencoded", "Idempotency-Key": `noor-confirm-${paymentIntentId}-${confirmationTokenId}-${afterAuthentication ? "authenticated" : "initial"}` },
+      body: new URLSearchParams(afterAuthentication ? {} : { confirmation_token: confirmationTokenId }).toString(),
+    });
+    const confirmed = await confirmRes.json();
+    if (!confirmRes.ok || confirmed.error) {
+      if (confirmed.error?.payment_intent?.status === "requires_payment_method") {
+        await kv.del(`payment-confirmation:${paymentIntentId}`);
+      }
+      throw new Error(confirmed.error?.message ?? "Could not confirm payment.");
+    }
+    return c.json({ success: true, quote, status: confirmed.status, clientSecret: confirmed.client_secret });
+  } catch (err) {
+    console.error("Stripe confirmation error:", err);
     return c.json({ success: false, error: (err as Error).message }, 500);
   }
 });
@@ -224,6 +350,11 @@ app.post("/make-server-e11bef9e/stripe-webhook", async (c) => {
     if (status === "paid") {
       updated.amountPaid = pi.amount_received;
       updated.paidAt = new Date(event.created * 1000).toISOString();
+      updated.standardProgramAmount = Number(pi.metadata?.standardProgramAmount ?? STANDARD_PROGRAM_AMOUNT);
+      updated.paymentDiscount = Number(pi.metadata?.paymentDiscount ?? 0);
+      updated.discountLabel = pi.metadata?.discountLabel || null;
+      updated.paymentMethodType = pi.metadata?.paymentMethodType || null;
+      updated.cardFunding = pi.metadata?.cardFunding || null;
     }
     await kv.set(registrationKey, updated);
   }

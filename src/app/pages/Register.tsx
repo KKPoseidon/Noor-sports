@@ -257,16 +257,55 @@ function SizingChart() {
 interface CheckoutFormProps {
   form: FormData;
   paymentIntentId: string;
-  onSuccess: (registrationId: string) => void;
+  initialQuote: PaymentQuote;
+  onSuccess: (registrationId: string, status: string) => void;
   onBack: () => void;
 }
 
-function CheckoutForm({ form, paymentIntentId, onSuccess, onBack }: CheckoutFormProps) {
+interface PaymentQuote {
+  paymentMethodType: string;
+  cardFunding: string | null;
+  programAmount: number;
+  discount: number;
+  discountLabel: string | null;
+  total: number;
+}
+
+const formatUsd = (amount: number) => `$${(amount / 100).toFixed(2)}`;
+
+function CheckoutForm({ form, paymentIntentId, initialQuote, onSuccess, onBack }: CheckoutFormProps) {
   const stripe = useStripe();
   const elements = useElements();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [quote, setQuote] = useState(initialQuote);
+  const savedRegistration = useRef<string | null>(null);
+  const [pendingConfirmation, setPendingConfirmation] = useState<{ tokenId: string; registrationId: string } | null>(null);
+
+  const finishServerConfirmation = async (tokenId: string, rid: string) => {
+    sessionStorage.setItem('noor-payment-review', JSON.stringify({ paymentIntentId, confirmationTokenId: tokenId, expectedTotal: quote.total, registrationId: rid }));
+    const confirmRes = await fetch(`${SERVER_URL}/confirm-payment`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` },
+      body: JSON.stringify({ paymentIntentId, confirmationTokenId: tokenId, finalize: true, expectedTotal: quote.total }),
+    });
+    const confirmData = await confirmRes.json();
+    if (!confirmRes.ok || !confirmData.success) throw new Error(confirmData.error ?? 'Payment could not be completed.');
+    setQuote(confirmData.quote);
+
+    if (confirmData.status === 'requires_action') {
+      const { error: actionError, paymentIntent } = await stripe!.handleNextAction({ clientSecret: confirmData.clientSecret });
+      if (actionError) throw new Error(actionError.message ?? 'Payment authentication failed.');
+      if (paymentIntent?.status === 'requires_confirmation') await finishServerConfirmation(tokenId, rid);
+      else if (paymentIntent && ['succeeded', 'processing'].includes(paymentIntent.status)) onSuccess(rid, paymentIntent.status);
+      else throw new Error('Payment was not completed. Please try again.');
+    } else if (['succeeded', 'processing'].includes(confirmData.status)) {
+      onSuccess(rid, confirmData.status);
+    } else {
+      throw new Error('Payment was not completed. Please try again.');
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -278,6 +317,17 @@ function CheckoutForm({ form, paymentIntentId, onSuccess, onBack }: CheckoutForm
     setSubmitError(null);
 
     try {
+      if (pendingConfirmation) {
+        await finishServerConfirmation(pendingConfirmation.tokenId, pendingConfirmation.registrationId);
+        return;
+      }
+
+      const { error: elementError } = await elements.submit();
+      if (elementError) throw new Error(elementError.message ?? 'Please check your payment details.');
+
+      // Reuse the pending registration when payment details need correction.
+      let rid = savedRegistration.current;
+      if (!rid) {
       // 1. Save registration record with pending payment status
       const regRes = await fetch(`${SERVER_URL}/register`, {
         method: 'POST',
@@ -313,7 +363,9 @@ function CheckoutForm({ form, paymentIntentId, onSuccess, onBack }: CheckoutForm
         throw new Error(regData.error ?? 'Registration save failed. Please try again.');
       }
 
-      const rid: string = regData.registrationId;
+      rid = regData.registrationId;
+      savedRegistration.current = rid;
+      }
 
       // 2. Associate the saved registration with this PaymentIntent before confirmation.
       //    The verified Stripe webhook uses this metadata to update the correct record.
@@ -327,23 +379,37 @@ function CheckoutForm({ form, paymentIntentId, onSuccess, onBack }: CheckoutForm
         throw new Error(associationData.error ?? 'Could not connect registration to payment. Please try again.');
       }
 
-      // 3. Confirm payment with Stripe Elements
-      const { error, paymentIntent } = await stripe.confirmPayment({
+      // 3. Validate the Element, then tokenize its payment details for the
+      //    server to inspect and confirm. Stripe exposes card.funding there.
+      const returnUrl = `${window.location.origin}/register?paid=1&rid=${rid}`;
+      const { error: tokenError, confirmationToken } = await stripe.createConfirmationToken({
         elements,
-        confirmParams: {
-          return_url: `${window.location.origin}/register?paid=1&rid=${rid}`,
-          receipt_email: form.email,
+        params: {
+          return_url: returnUrl,
+          payment_method_data: {
+            billing_details: {
+              name: `${form.parentFirstName} ${form.parentLastName}`.trim(),
+              email: form.email,
+              phone: form.phone,
+            },
+          },
         },
-        redirect: 'if_required',
       });
+      if (tokenError || !confirmationToken) throw new Error(tokenError?.message ?? 'Could not secure payment details.');
 
-      if (error) {
-        throw new Error(error.message ?? 'Payment could not be completed.');
-      }
-
-      if (paymentIntent && paymentIntent.status === 'succeeded') {
-        onSuccess(rid);
-      }
+      // 4. The server reads the ConfirmationToken from Stripe, checks
+      //    payment_method_preview.card.funding, returns a verified total without charging.
+      const quoteRes = await fetch(`${SERVER_URL}/confirm-payment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` },
+        body: JSON.stringify({ paymentIntentId, confirmationTokenId: confirmationToken.id, finalize: false }),
+      });
+      const quoteData = await quoteRes.json();
+      if (!quoteRes.ok || !quoteData.success) throw new Error(quoteData.error ?? 'Could not verify payment details.');
+      setQuote(quoteData.quote);
+      setPendingConfirmation({ tokenId: confirmationToken.id, registrationId: rid! });
+      submittingRef.current = false;
+      setIsSubmitting(false);
     } catch (err) {
       setSubmitError((err as Error).message);
       submittingRef.current = false;
@@ -355,9 +421,9 @@ function CheckoutForm({ form, paymentIntentId, onSuccess, onBack }: CheckoutForm
     <form onSubmit={handleSubmit} noValidate className="space-y-8">
 
       {/* Stripe Payment Element */}
-      <div>
+      <div hidden={!!pendingConfirmation} style={{ pointerEvents: isSubmitting ? 'none' : undefined }}>
         <SectionHead icon={<CreditCard className="w-4 h-4 text-[#0066CC]" />}>
-          Card Details
+          Payment Details
         </SectionHead>
         <PaymentElement
           options={{
@@ -367,22 +433,30 @@ function CheckoutForm({ form, paymentIntentId, onSuccess, onBack }: CheckoutForm
         />
       </div>
 
+      {pendingConfirmation && <div className="space-y-3" aria-live="polite">
+        <p className="font-semibold text-[#004C97]">Payment method verified. Review your total below.</p>
+        <button type="button" disabled={isSubmitting} className="text-[#0066CC] underline disabled:opacity-40" onClick={() => {
+          setPendingConfirmation(null); setQuote(initialQuote); setSubmitError(null);
+        }}>Change payment method</button>
+      </div>}
+
       {/* Fee disclaimer */}
       <div className="bg-amber-50 border border-amber-200 p-5 text-sm text-amber-800 leading-relaxed">
         <p className="font-semibold mb-1">Program Tuition</p>
         <p>
-          This is a secure, one-time tuition payment for the Fall 2026 Soccer Camp. Your card will be charged $385.00 USD.
+          Standard tuition is $397. Pay $385 with a verified debit card or US bank account. Credit, prepaid, and unverified cards are $397. Review Total checks your discount before you confirm payment.
         </p>
-        <div className="mt-3 pt-3 border-t border-amber-200 flex justify-between font-bold text-base">
-          <span>Total due</span>
-          <span>$385.00</span>
+        <div className="mt-3 pt-3 border-t border-amber-200 space-y-2 text-base">
+          <div className="flex justify-between"><span>Program Registration</span><span>{formatUsd(quote.programAmount)}</span></div>
+          {quote.discount > 0 && <div className="flex justify-between"><span>{quote.discountLabel}</span><span>-{formatUsd(quote.discount)}</span></div>}
+          <div className="flex justify-between font-bold"><span>{pendingConfirmation ? 'Verified total' : 'Total before verification'}</span><span>{formatUsd(quote.total)}</span></div>
         </div>
       </div>
 
       {/* Submit error */}
       {submitError && (
         <div className="bg-red-50 border border-red-200 px-5 py-4 text-sm text-red-700 leading-relaxed">
-          <strong>Payment failed:</strong> {submitError}
+          <strong>Payment needs attention:</strong> {submitError}
         </div>
       )}
 
@@ -423,7 +497,7 @@ function CheckoutForm({ form, paymentIntentId, onSuccess, onBack }: CheckoutForm
             </span>
           ) : (
             <>
-              <span className="relative z-10 font-medium">Complete Registration — $385.00</span>
+              <span className="relative z-10 font-medium">{pendingConfirmation ? `Confirm Payment — ${formatUsd(quote.total)}` : 'Review Total'}</span>
               <ArrowRight className="w-5 h-5 relative z-10" />
             </>
           )}
@@ -445,21 +519,42 @@ export function Register() {
   const [form, setForm] = useState<FormData>(EMPTY_FORM);
   const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
   const [registrationId, setRegistrationId] = useState<string | null>(null);
+  const [paymentStatus, setPaymentStatus] = useState('succeeded');
+  const [returnError, setReturnError] = useState<string | null>(null);
 
   // PaymentIntent client secret — fetched when user reaches step 4
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
+  const [initialQuote, setInitialQuote] = useState<PaymentQuote | null>(null);
   const [piLoading, setPiLoading] = useState(false);
   const [piError, setPiError] = useState<string | null>(null);
 
   // Detect return from Stripe 3DS redirect
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('paid') === '1') {
-      const rid = params.get('rid') ?? null;
-      setRegistrationId(rid);
-      setView('success');
-      window.history.replaceState({}, '', window.location.pathname);
+    const secret = params.get('payment_intent_client_secret');
+    if (params.get('paid') === '1' && secret) {
+      void stripePromise.then(async (stripe) => {
+        if (!stripe) return;
+        let { paymentIntent } = await stripe.retrievePaymentIntent(secret);
+        if (paymentIntent?.status === 'requires_confirmation') {
+          const saved = JSON.parse(sessionStorage.getItem('noor-payment-review') ?? 'null');
+          if (!saved || saved.paymentIntentId !== paymentIntent.id) throw new Error('Please contact Noor Sports to finish payment confirmation.');
+          const res = await fetch(`${SERVER_URL}/confirm-payment`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
+            body: JSON.stringify({ ...saved, finalize: true }),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.success) throw new Error(data.error ?? 'Could not finish payment.');
+          ({ paymentIntent } = await stripe.retrievePaymentIntent(secret));
+        }
+        if (paymentIntent && ['succeeded', 'processing'].includes(paymentIntent.status)) {
+          setRegistrationId(params.get('rid')); setPaymentStatus(paymentIntent.status); setView('success');
+          sessionStorage.removeItem('noor-payment-review');
+        }
+        else throw new Error('Payment is not complete. Please contact Noor Sports before trying again.');
+        window.history.replaceState({}, '', window.location.pathname);
+      }).catch((err) => setReturnError(err.message));
     }
   }, []);
 
@@ -479,10 +574,11 @@ export function Register() {
         const stripe = await stripePromise;
         if (!stripe) throw new Error('Stripe could not load.');
         const result = await stripe.retrievePaymentIntent(data.clientSecret);
-        if (result.error || !result.paymentIntent || result.paymentIntent.amount !== 38500 || result.paymentIntent.currency !== 'usd') {
-          throw new Error('Payment blocked: expected exactly $385.00 USD for the Fall 2026 Soccer Camp. Redeploy the updated Supabase function and reload this page.');
+        if (result.error || !result.paymentIntent || !data.quote || result.paymentIntent.amount !== data.quote.total || data.quote.programAmount !== 39700 || result.paymentIntent.currency !== 'usd') {
+          throw new Error('Payment blocked: the server returned an invalid Fall 2026 Soccer Camp total. Reload this page and try again.');
         }
         setPaymentIntentId(data.paymentIntentId);
+        setInitialQuote(data.quote);
         setClientSecret(data.clientSecret);
       })
       .catch((err) => setPiError((err as Error).message))
@@ -636,6 +732,7 @@ export function Register() {
 
       {/* ── Contact Help Notice (all views) ── */}
       <ContactNotice />
+      {returnError && <p role="alert" className="p-6 text-red-700 bg-red-50">{returnError}</p>}
 
       {/* ── Success ── */}
       {view === 'success' && (
@@ -657,7 +754,7 @@ export function Register() {
                   <CheckCircle className="w-11 h-11 text-white" />
                 </motion.div>
 
-                <div className="text-xs tracking-[0.2em] uppercase text-[#0066CC]/50 mb-4">Registration Confirmed</div>
+                <div className="text-xs tracking-[0.2em] uppercase text-[#0066CC]/50 mb-4">{paymentStatus === 'processing' ? 'Payment Processing' : 'Registration Confirmed'}</div>
                 <h2 className="text-4xl lg:text-5xl tracking-tight text-[#004C97] mb-6 leading-tight">
                   Thank You,{' '}{form.parentFirstName}!
                 </h2>
@@ -665,7 +762,7 @@ export function Register() {
                   We are so excited to have <strong className="text-[#004C97]">{form.childFirstName}</strong> join us this fall.
                 </p>
                 <p className="text-base text-[#004C97]/55 leading-relaxed">
-                  Your payment confirmation will be sent to{' '}
+                  {paymentStatus === 'processing' ? 'Your bank payment is processing. Registration is confirmed once payment succeeds. Updates will be sent to' : 'Your payment confirmation will be sent to'}{' '}
                   <span className="font-semibold text-[#004C97]/70">{form.email}</span>.
                   Our team will reach out within <strong className="text-[#004C97]/70">1–2 business days</strong> to confirm your registration and go over your uniform details.
                 </p>
@@ -764,7 +861,7 @@ export function Register() {
                       { icon: <Calendar className="w-5 h-5 text-[#00BFFF]" />, label: 'Season', main: 'October 5 – December 17, 2026', sub: '10-week session' },
                       { icon: <Clock className="w-5 h-5 text-[#00BFFF]" />, label: 'Schedule', main: 'Tuesdays & Thursdays', sub: '4:15 PM – 5:30 PM' },
                       { icon: <Users className="w-5 h-5 text-[#00BFFF]" />, label: 'Ages', main: 'TK – 5th Grade', sub: '' },
-                      { icon: <DollarSign className="w-5 h-5 text-[#00BFFF]" />, label: 'Tuition', main: '$385.00', sub: 'Full 10-week camp' },
+                      { icon: <DollarSign className="w-5 h-5 text-[#00BFFF]" />, label: 'Tuition', main: 'Starting at $385', sub: '$397 standard · $12 discount with verified debit or bank payment' },
                     ].map(({ icon, label, main, sub }) => (
                       <div key={label} className="flex items-start gap-4">
                         <div className="flex-shrink-0 w-10 h-10 bg-white/10 flex items-center justify-center mt-0.5">{icon}</div>
@@ -1201,8 +1298,8 @@ export function Register() {
                   <div className="flex items-center justify-between bg-[#F8FBFF] px-6 py-5 border-l-4 border-[#0066CC]">
                     <div>
                       <div className="text-xs tracking-[0.15em] uppercase text-[#0066CC]/50 mb-1">Program Tuition</div>
-                      <div className="text-4xl font-semibold text-[#004C97]">$385.00</div>
-                      <div className="text-xs text-[#004C97]/50 mt-1">Fall 2026 Soccer Camp · one-time payment</div>
+                      <div className="text-4xl font-semibold text-[#004C97]">Starting at $385</div>
+                      <div className="text-xs text-[#004C97]/50 mt-1">$397 standard · $385 with verified debit or bank payment</div>
                     </div>
                     <div className="flex items-center gap-2 text-[#004C97]/30">
                       <Shield className="w-5 h-5" />
@@ -1239,7 +1336,7 @@ export function Register() {
                   )}
 
                   {/* Embedded Stripe Payment Element */}
-                  {!piLoading && !piError && clientSecret && paymentIntentId && (
+                  {!piLoading && !piError && clientSecret && paymentIntentId && initialQuote && (
                     <Elements
                       stripe={stripePromise}
                       options={{ clientSecret, appearance: stripeAppearance as any }}
@@ -1247,7 +1344,8 @@ export function Register() {
                       <CheckoutForm
                         form={form}
                         paymentIntentId={paymentIntentId}
-                        onSuccess={(rid) => { setRegistrationId(rid); setView('success'); }}
+                        initialQuote={initialQuote}
+                        onSuccess={(rid, status) => { setRegistrationId(rid); setPaymentStatus(status); sessionStorage.removeItem('noor-payment-review'); setView('success'); }}
                         onBack={goBack}
                       />
                     </Elements>
