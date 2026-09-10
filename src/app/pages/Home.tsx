@@ -73,7 +73,7 @@ export function Home() {
               >
                 Future
               </motion.span>
-              {' '}Ummah
+              {' '}Generation
             </motion.h1>
             <motion.div
               initial={{ opacity: 0, y: 20 }}

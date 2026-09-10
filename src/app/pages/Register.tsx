@@ -281,6 +281,14 @@ function CheckoutForm({ form, paymentIntentId, initialQuote, onSuccess, onBack }
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [quote, setQuote] = useState(initialQuote);
   const savedRegistration = useRef<string | null>(null);
+  const [paymentReady, setPaymentReady] = useState(false);
+  const [paymentLoadError, setPaymentLoadError] = useState<string | null>(null);
+  const [paymentElementKey, setPaymentElementKey] = useState(0);
+  useEffect(() => {
+    if (paymentReady) return;
+    const timer = window.setTimeout(() => setPaymentLoadError('Secure payment fields could not load. Retry below, or allow Stripe if a browser extension is blocking it.'), 20000);
+    return () => window.clearTimeout(timer);
+  }, [paymentReady, paymentElementKey]);
   const [pendingConfirmation, setPendingConfirmation] = useState<{ tokenId: string; registrationId: string } | null>(null);
 
   const finishServerConfirmation = async (tokenId: string, rid: string) => {
@@ -425,7 +433,17 @@ function CheckoutForm({ form, paymentIntentId, initialQuote, onSuccess, onBack }
         <SectionHead icon={<CreditCard className="w-4 h-4 text-[#0066CC]" />}>
           Payment Details
         </SectionHead>
+        {!paymentReady && !paymentLoadError && <p role="status" className="mb-4 text-sm text-[#004C97]">Loading secure payment fields…</p>}
+        {paymentLoadError && <div role="alert" className="mb-4 p-4 bg-red-50 text-red-700 text-sm">
+          <p>{paymentLoadError}</p>
+          <button type="button" className="mt-2 underline" onClick={() => {
+            setPaymentReady(false); setPaymentLoadError(null); setPaymentElementKey((key) => key + 1);
+          }}>Retry payment fields</button>
+        </div>}
         <PaymentElement
+          key={paymentElementKey}
+          onReady={() => { setPaymentReady(true); setPaymentLoadError(null); }}
+          onLoadError={({ error }) => setPaymentLoadError(error.message ?? 'Secure payment fields could not load. Please retry.')}
           options={{
             layout: 'tabs',
             wallets: { applePay: 'auto', googlePay: 'auto' },
@@ -473,7 +491,7 @@ function CheckoutForm({ form, paymentIntentId, initialQuote, onSuccess, onBack }
         </button>
         <motion.button
           type="submit"
-          disabled={isSubmitting || !stripe || !elements}
+          disabled={isSubmitting || !stripe || !elements || !paymentReady}
           className="flex-1 inline-flex items-center justify-center gap-3 bg-[#0066CC] text-white px-8 py-4 text-base tracking-tight relative overflow-hidden group cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed"
           whileHover={isSubmitting ? {} : { scale: 1.01 }}
           whileTap={isSubmitting ? {} : { scale: 0.99 }}
@@ -564,6 +582,7 @@ export function Register() {
     setPiLoading(true);
     setPiError(null);
     fetch(`${SERVER_URL}/create-payment-intent`, {
+      signal: AbortSignal.timeout(15000),
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` },
       body: JSON.stringify({}),
@@ -571,11 +590,8 @@ export function Register() {
       .then((r) => r.json())
       .then(async (data) => {
         if (!data.success) throw new Error(data.error ?? 'Failed to initialize payment.');
-        const stripe = await stripePromise;
-        if (!stripe) throw new Error('Stripe could not load.');
-        const result = await stripe.retrievePaymentIntent(data.clientSecret);
-        if (result.error || !result.paymentIntent || !data.quote || result.paymentIntent.amount !== data.quote.total || data.quote.programAmount !== 39700 || result.paymentIntent.currency !== 'usd') {
-          throw new Error('Payment blocked: the server returned an invalid Fall 2026 Soccer Camp total. Reload this page and try again.');
+        if (!data.clientSecret || !data.paymentIntentId || data.quote?.total !== 39700 || data.quote?.programAmount !== 39700) {
+          throw new Error('The server returned an invalid camp total. Please reload and try again.');
         }
         setPaymentIntentId(data.paymentIntentId);
         setInitialQuote(data.quote);
@@ -861,7 +877,7 @@ export function Register() {
                       { icon: <Calendar className="w-5 h-5 text-[#00BFFF]" />, label: 'Season', main: 'October 5 – December 17, 2026', sub: '10-week session' },
                       { icon: <Clock className="w-5 h-5 text-[#00BFFF]" />, label: 'Schedule', main: 'Tuesdays & Thursdays', sub: '4:15 PM – 5:30 PM' },
                       { icon: <Users className="w-5 h-5 text-[#00BFFF]" />, label: 'Ages', main: 'TK – 5th Grade', sub: '' },
-                      { icon: <DollarSign className="w-5 h-5 text-[#00BFFF]" />, label: 'Tuition', main: 'Starting at $385', sub: '$397 standard · $12 discount with verified debit or bank payment' },
+                      { icon: <DollarSign className="w-5 h-5 text-[#00BFFF]" />, label: 'Tuition', main: '$385', sub: '$397 standard · $12 discount with verified debit or bank payment' },
                     ].map(({ icon, label, main, sub }) => (
                       <div key={label} className="flex items-start gap-4">
                         <div className="flex-shrink-0 w-10 h-10 bg-white/10 flex items-center justify-center mt-0.5">{icon}</div>
@@ -1298,7 +1314,7 @@ export function Register() {
                   <div className="flex items-center justify-between bg-[#F8FBFF] px-6 py-5 border-l-4 border-[#0066CC]">
                     <div>
                       <div className="text-xs tracking-[0.15em] uppercase text-[#0066CC]/50 mb-1">Program Tuition</div>
-                      <div className="text-4xl font-semibold text-[#004C97]">Starting at $385</div>
+                      <div className="text-4xl font-semibold text-[#004C97]">$385</div>
                       <div className="text-xs text-[#004C97]/50 mt-1">$397 standard · $385 with verified debit or bank payment</div>
                     </div>
                     <div className="flex items-center gap-2 text-[#004C97]/30">
@@ -1339,7 +1355,7 @@ export function Register() {
                   {!piLoading && !piError && clientSecret && paymentIntentId && initialQuote && (
                     <Elements
                       stripe={stripePromise}
-                      options={{ clientSecret, appearance: stripeAppearance as any }}
+                      options={{ mode: 'payment', amount: initialQuote.total, currency: 'usd', paymentMethodTypes: ['card', 'us_bank_account'], appearance: stripeAppearance as any }}
                     >
                       <CheckoutForm
                         form={form}
