@@ -27,7 +27,7 @@ const endpoint=routes.get('/make-server-e11bef9e/confirm-payment');
 async function call(body){return endpoint({req:{json:async()=>({paymentIntentId:'pi_test',confirmationTokenId:'ctoken_test',...body})},json:(data,status=200)=>({data,status})})}
 function reset(type='card',funding='credit'){
   store.clear();mutations=[];confirmedStatus='succeeded';
-  pi={id:'pi_test',currency:'usd',amount:39700,confirmation_method:'manual',status:'requires_payment_method',metadata:{programCode:'fall-2026-soccer-camp',registrationId:'NS-test'},client_secret:'test'};
+  pi={id:'pi_test',currency:'usd',amount:39700,confirmation_method:'automatic',status:'requires_payment_method',metadata:{programCode:'fall-2026-soccer-camp',registrationId:'NS-test'},client_secret:'test'};
   token={expires_at:Date.now()/1000+3600,payment_method_preview:{type,card:{funding},billing_details:{email:'test@example.com'}}};
 }
 let count=0;
@@ -41,7 +41,7 @@ reset();await call({finalize:false});assert.equal((await call({finalize:true,exp
 reset();token.expires_at=1;assert.equal((await call({finalize:false})).status,409);count++;
 reset('link');assert.equal((await call({finalize:false})).status,400);count++;
 reset();pi.metadata.programCode='other';assert.equal((await call({finalize:false})).status,403);count++;
-reset();pi.confirmation_method='automatic';assert.equal((await call({finalize:false})).status,409);count++;
+reset();pi.confirmation_method='manual';assert.equal((await call({finalize:false})).status,409);count++;
 reset('card','debit');await call({finalize:false});confirmedStatus='requires_action';await call({finalize:true,expectedTotal:38500});pi.status='requires_confirmation';confirmedStatus='succeeded';assert.equal((await call({finalize:true,expectedTotal:38500})).data.status,'succeeded');assert.equal(mutations.length,3);assert.equal(mutations[2].opts.body,'');count++;
 reset('us_bank_account');await call({finalize:false});confirmedStatus='processing';assert.equal((await call({finalize:true,expectedTotal:38500})).data.status,'processing');count++;
 reset();await call({finalize:false});store.set('payment-confirmation:pi_test',{tokenId:'ctoken_other'});assert.equal((await call({finalize:true,expectedTotal:39700})).status,409);assert.equal(mutations.length,0);count++;

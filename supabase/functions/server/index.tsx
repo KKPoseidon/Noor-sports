@@ -188,7 +188,7 @@ app.post("/make-server-e11bef9e/create-payment-intent", async (c) => {
       body: new URLSearchParams({
         amount: String(STANDARD_PROGRAM_AMOUNT),
         currency: "usd",
-        confirmation_method: "manual",
+        confirmation_method: "automatic",
         "payment_method_types[0]": "card",
         "payment_method_types[1]": "us_bank_account",
         "metadata[programCode]": PROGRAM_CODE,
@@ -235,7 +235,7 @@ app.post("/make-server-e11bef9e/confirm-payment", async (c) => {
     if (body.finalize === true && (!review || body.expectedTotal !== review.quote.total)) {
       return c.json({ success: false, error: "Review your payment total before confirming." }, 409);
     }
-    if (current.confirmation_method !== "manual") {
+    if (current.confirmation_method !== "automatic") {
       return c.json({ success: false, error: "Please reload checkout to use the updated pricing." }, 409);
     }
     if (body.finalize === true && ["succeeded", "processing", "requires_action"].includes(current.status)) {
