@@ -258,7 +258,7 @@ interface CheckoutFormProps {
   form: FormData;
   paymentIntentId: string;
   initialQuote: PaymentQuote;
-  onSuccess: (registrationId: string, status: string) => void;
+  onSuccess: (registrationId: string, status: string, hostedVerificationUrl?: string) => void;
   onBack: () => void;
 }
 
@@ -307,6 +307,10 @@ function CheckoutForm({ form, paymentIntentId, initialQuote, onSuccess, onBack }
       if (actionError) throw new Error(actionError.message ?? 'Payment authentication failed.');
       if (paymentIntent?.status === 'requires_confirmation') await finishServerConfirmation(tokenId, rid);
       else if (paymentIntent && ['succeeded', 'processing'].includes(paymentIntent.status)) onSuccess(rid, paymentIntent.status);
+      else if (paymentIntent?.status === 'requires_action' && paymentIntent.next_action?.type === 'verify_with_microdeposits') {
+        sessionStorage.removeItem('noor-payment-review');
+        onSuccess(rid, 'requires_action', paymentIntent.next_action.verify_with_microdeposits.hosted_verification_url);
+      }
       else throw new Error('Payment was not completed. Please try again.');
     } else if (['succeeded', 'processing'].includes(confirmData.status)) {
       onSuccess(rid, confirmData.status);
@@ -538,6 +542,7 @@ export function Register() {
   const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
   const [registrationId, setRegistrationId] = useState<string | null>(null);
   const [paymentStatus, setPaymentStatus] = useState('succeeded');
+  const [hostedVerificationUrl, setHostedVerificationUrl] = useState<string | null>(null);
   const [returnError, setReturnError] = useState<string | null>(null);
 
   // PaymentIntent client secret — fetched when user reaches step 4
@@ -770,7 +775,9 @@ export function Register() {
                   <CheckCircle className="w-11 h-11 text-white" />
                 </motion.div>
 
-                <div className="text-xs tracking-[0.2em] uppercase text-[#0066CC]/50 mb-4">{paymentStatus === 'processing' ? 'Payment Processing' : 'Registration Confirmed'}</div>
+                <div className="text-xs tracking-[0.2em] uppercase text-[#0066CC]/50 mb-4">
+                  {paymentStatus === 'requires_action' ? 'Bank Verification Needed' : paymentStatus === 'processing' ? 'Payment Processing' : 'Registration Confirmed'}
+                </div>
                 <h2 className="text-4xl lg:text-5xl tracking-tight text-[#004C97] mb-6 leading-tight">
                   Thank You,{' '}{form.parentFirstName}!
                 </h2>
@@ -778,10 +785,19 @@ export function Register() {
                   We are so excited to have <strong className="text-[#004C97]">{form.childFirstName}</strong> join us this fall.
                 </p>
                 <p className="text-base text-[#004C97]/55 leading-relaxed">
-                  {paymentStatus === 'processing' ? 'Your bank payment is processing. Registration is confirmed once payment succeeds. Updates will be sent to' : 'Your payment confirmation will be sent to'}{' '}
+                  {paymentStatus === 'requires_action'
+                    ? 'Stripe needs to verify your bank account with a small microdeposit before payment can begin. Verification instructions will be sent to'
+                    : paymentStatus === 'processing'
+                      ? 'Your bank payment is processing. Registration is confirmed once payment succeeds. Updates will be sent to'
+                      : 'Your payment confirmation will be sent to'}{' '}
                   <span className="font-semibold text-[#004C97]/70">{form.email}</span>.
-                  Our team will reach out within <strong className="text-[#004C97]/70">1–2 business days</strong> to confirm your registration and go over your uniform details.
+                  {paymentStatus !== 'requires_action' && <> Our team will reach out within <strong className="text-[#004C97]/70">1–2 business days</strong> to confirm your registration and go over your uniform details.</>}
                 </p>
+                {paymentStatus === 'requires_action' && hostedVerificationUrl && (
+                  <a href={hostedVerificationUrl} className="inline-flex mt-6 bg-[#0066CC] text-white px-7 py-4 font-medium hover:bg-[#004C97] transition-colors">
+                    Verify Bank Account with Stripe
+                  </a>
+                )}
               </div>
 
               {/* Details card */}
@@ -1361,7 +1377,13 @@ export function Register() {
                         form={form}
                         paymentIntentId={paymentIntentId}
                         initialQuote={initialQuote}
-                        onSuccess={(rid, status) => { setRegistrationId(rid); setPaymentStatus(status); sessionStorage.removeItem('noor-payment-review'); setView('success'); }}
+                        onSuccess={(rid, status, verificationUrl) => {
+                          setRegistrationId(rid);
+                          setPaymentStatus(status);
+                          setHostedVerificationUrl(verificationUrl ?? null);
+                          sessionStorage.removeItem('noor-payment-review');
+                          setView('success');
+                        }}
                         onBack={goBack}
                       />
                     </Elements>
