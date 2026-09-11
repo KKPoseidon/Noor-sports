@@ -31,7 +31,7 @@ function reset(type='card',funding='credit'){
   token={expires_at:Date.now()/1000+3600,payment_method_preview:{type,card:{funding},billing_details:{email:'test@example.com'}}};
 }
 let count=0;
-for(const [type,funding,total] of [['card','debit',38500],['us_bank_account',null,38500],['card','credit',39700],['card','prepaid',39700],['card','unknown',39700],['card',undefined,39700]]){
+for(const [type,funding,total] of [['card','debit',39700],['us_bank_account',null,38500],['card','credit',39700],['card','prepaid',39700],['card','unknown',39700],['card',undefined,39700]]){
   reset(type,funding);let r=await call({finalize:false,total:1,discount:99999});assert.equal(r.data.quote.total,total);assert.equal(mutations.length,0,'Review must never mutate Stripe');
   r=await call({finalize:true,expectedTotal:total});assert.equal(r.status,200);assert.equal(pi.amount,total);assert.equal(mutations.length,2);assert.ok(mutations[1].opts.headers['Idempotency-Key']);
   r=await call({finalize:true,expectedTotal:total});assert.equal(r.data.status,'succeeded');assert.equal(mutations.length,2,'Retry must not charge again');count+=3;
@@ -42,7 +42,7 @@ reset();token.expires_at=1;assert.equal((await call({finalize:false})).status,40
 reset('link');assert.equal((await call({finalize:false})).status,400);count++;
 reset();pi.metadata.programCode='other';assert.equal((await call({finalize:false})).status,403);count++;
 reset();pi.confirmation_method='manual';assert.equal((await call({finalize:false})).status,409);count++;
-reset('card','debit');await call({finalize:false});confirmedStatus='requires_action';await call({finalize:true,expectedTotal:38500});pi.status='requires_confirmation';confirmedStatus='succeeded';assert.equal((await call({finalize:true,expectedTotal:38500})).data.status,'succeeded');assert.equal(mutations.length,3);assert.equal(mutations[2].opts.body,'');count++;
+reset('card','debit');await call({finalize:false});confirmedStatus='requires_action';await call({finalize:true,expectedTotal:39700});pi.status='requires_confirmation';confirmedStatus='succeeded';assert.equal((await call({finalize:true,expectedTotal:39700})).data.status,'succeeded');assert.equal(mutations.length,3);assert.equal(mutations[2].opts.body,'');count++;
 reset('us_bank_account');await call({finalize:false});confirmedStatus='processing';assert.equal((await call({finalize:true,expectedTotal:38500})).data.status,'processing');count++;
 reset();await call({finalize:false});store.set('payment-confirmation:pi_test',{tokenId:'ctoken_other'});assert.equal((await call({finalize:true,expectedTotal:39700})).status,409);assert.equal(mutations.length,0);count++;
 console.log(`${count} payment assertions/scenarios passed; Stripe calls mocked, no real charges.`);

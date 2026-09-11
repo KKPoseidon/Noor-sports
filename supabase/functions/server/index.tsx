@@ -35,14 +35,13 @@ const PROGRAM_CODE = "fall-2026-soccer-camp";
 
 function paymentQuote(paymentMethodType: string, cardFunding?: string) {
   const isBank = paymentMethodType === "us_bank_account";
-  const isDebit = paymentMethodType === "card" && cardFunding === "debit";
-  const discount = isBank || isDebit ? PAYMENT_DISCOUNT : 0;
+  const discount = isBank ? PAYMENT_DISCOUNT : 0;
   return {
     paymentMethodType,
     cardFunding: cardFunding ?? null,
     programAmount: STANDARD_PROGRAM_AMOUNT,
     discount,
-    discountLabel: isBank ? "Bank Payment Discount" : isDebit ? "Debit Payment Discount" : null,
+    discountLabel: isBank ? "Bank Payment Discount" : null,
     total: STANDARD_PROGRAM_AMOUNT - discount,
   };
 }

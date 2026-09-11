@@ -461,8 +461,8 @@ function CheckoutForm({ form, paymentIntentId, initialQuote, onSuccess, onBack }
       {/* Fee disclaimer */}
       <div className="bg-amber-50 border border-amber-200 p-5 text-sm text-amber-800 leading-relaxed">
         <p className="font-semibold mb-1">Program Tuition</p>
-        <p>
-          Standard tuition is $397. Pay $385 with a verified debit card or US bank account. Credit, prepaid, and unverified cards are $397. Review Total checks your discount before you confirm payment.
+        <p className="text-red-700">
+          Standard tuition is $397 for all card payments, including credit and debit. Pay $385 with a verified US bank account. Review Total checks your bank discount before you confirm payment.
         </p>
         <div className="mt-3 pt-3 border-t border-amber-200 space-y-2 text-base">
           <div className="flex justify-between"><span>Program Registration</span><span>{formatUsd(quote.programAmount)}</span></div>
@@ -877,7 +877,7 @@ export function Register() {
                       { icon: <Calendar className="w-5 h-5 text-[#00BFFF]" />, label: 'Season', main: 'October 5 – December 17, 2026', sub: '10-week session' },
                       { icon: <Clock className="w-5 h-5 text-[#00BFFF]" />, label: 'Schedule', main: 'Tuesdays & Thursdays', sub: '4:15 PM – 5:30 PM' },
                       { icon: <Users className="w-5 h-5 text-[#00BFFF]" />, label: 'Ages', main: 'TK – 5th Grade', sub: '' },
-                      { icon: <DollarSign className="w-5 h-5 text-[#00BFFF]" />, label: 'Tuition', main: '$385', sub: '$397 standard · $12 discount with verified debit or bank payment' },
+                      { icon: <DollarSign className="w-5 h-5 text-[#00BFFF]" />, label: 'Tuition', main: '$385', sub: '$397 for card payments · $385 with verified US bank payment' },
                     ].map(({ icon, label, main, sub }) => (
                       <div key={label} className="flex items-start gap-4">
                         <div className="flex-shrink-0 w-10 h-10 bg-white/10 flex items-center justify-center mt-0.5">{icon}</div>
@@ -1315,7 +1315,7 @@ export function Register() {
                     <div>
                       <div className="text-xs tracking-[0.15em] uppercase text-[#0066CC]/50 mb-1">Program Tuition</div>
                       <div className="text-4xl font-semibold text-[#004C97]">$385</div>
-                      <div className="text-xs text-[#004C97]/50 mt-1">$397 standard · $385 with verified debit or bank payment</div>
+                      <div className="text-xs text-red-600 mt-1">$397 for card payments · $385 with verified US bank payment</div>
                     </div>
                     <div className="flex items-center gap-2 text-[#004C97]/30">
                       <Shield className="w-5 h-5" />
