@@ -303,6 +303,11 @@ function CheckoutForm({ form, paymentIntentId, initialQuote, onSuccess, onBack }
     setQuote(confirmData.quote);
 
     if (confirmData.status === 'requires_action') {
+      if (confirmData.nextActionType === 'verify_with_microdeposits' && confirmData.hostedVerificationUrl) {
+        sessionStorage.removeItem('noor-payment-review');
+        onSuccess(rid, 'requires_action', confirmData.hostedVerificationUrl);
+        return;
+      }
       const { error: actionError, paymentIntent } = await stripe!.handleNextAction({ clientSecret: confirmData.clientSecret });
       if (actionError) throw new Error(actionError.message ?? 'Payment authentication failed.');
       if (paymentIntent?.status === 'requires_confirmation') await finishServerConfirmation(tokenId, rid);
@@ -573,6 +578,13 @@ export function Register() {
         }
         if (paymentIntent && ['succeeded', 'processing'].includes(paymentIntent.status)) {
           setRegistrationId(params.get('rid')); setPaymentStatus(paymentIntent.status); setView('success');
+          sessionStorage.removeItem('noor-payment-review');
+        }
+        else if (paymentIntent?.status === 'requires_action' && paymentIntent.next_action?.type === 'verify_with_microdeposits') {
+          setRegistrationId(params.get('rid'));
+          setPaymentStatus('requires_action');
+          setHostedVerificationUrl(paymentIntent.next_action.verify_with_microdeposits.hosted_verification_url);
+          setView('success');
           sessionStorage.removeItem('noor-payment-review');
         }
         else throw new Error('Payment is not complete. Please contact Noor Sports before trying again.');

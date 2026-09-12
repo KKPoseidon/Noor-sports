@@ -33,6 +33,10 @@ const STANDARD_PROGRAM_AMOUNT = 39700;
 const PAYMENT_DISCOUNT = 1200;
 const PROGRAM_CODE = "fall-2026-soccer-camp";
 
+function paymentLog(event: string, details: Record<string, unknown> = {}) {
+  console.log(JSON.stringify({ scope: "payments", event, ...details }));
+}
+
 function paymentQuote(paymentMethodType: string, cardFunding?: string) {
   const isBank = paymentMethodType === "us_bank_account";
   const discount = isBank ? PAYMENT_DISCOUNT : 0;
@@ -132,6 +136,7 @@ app.post("/make-server-e11bef9e/register", async (c) => {
     };
 
     await kv.set(`registration:${registrationId}`, record);
+    paymentLog("registration.saved", { registrationId, paymentStatus: record.paymentStatus });
 
     return c.json({ success: true, registrationId });
   } catch (err) {
@@ -146,6 +151,7 @@ app.post("/make-server-e11bef9e/register", async (c) => {
 app.post("/make-server-e11bef9e/associate-payment", async (c) => {
   try {
     const { registrationId, paymentIntentId } = await c.req.json();
+    paymentLog("payment.association.started", { registrationId, paymentIntentId });
     if (!registrationId || !paymentIntentId?.startsWith("pi_")) {
       return c.json({ success: false, error: "Invalid registration or PaymentIntent ID." }, 400);
     }
@@ -164,6 +170,7 @@ app.post("/make-server-e11bef9e/associate-payment", async (c) => {
 
     await kv.set(key, { ...record, stripePaymentIntentId: pi.id });
     await kv.set(`payment-intent:${pi.id}`, registrationId);
+    paymentLog("payment.association.saved", { registrationId, paymentIntentId: pi.id, status: pi.status });
     return c.json({ success: true });
   } catch (err) {
     console.error("Payment association error:", err);
@@ -198,6 +205,12 @@ app.post("/make-server-e11bef9e/create-payment-intent", async (c) => {
     const pi = await piRes.json();
     if (pi.error) throw new Error(pi.error.message);
 
+    paymentLog("payment_intent.created", {
+      paymentIntentId: pi.id,
+      status: pi.status,
+      paymentMethodTypes: pi.payment_method_types,
+    });
+
     return c.json({ success: true, clientSecret: pi.client_secret, paymentIntentId: pi.id, quote });
   } catch (err) {
     console.error("Stripe PaymentIntent error:", err);
@@ -208,11 +221,14 @@ app.post("/make-server-e11bef9e/create-payment-intent", async (c) => {
 // Inspect Stripe's tokenized payment details, apply any eligible discount, and
 // confirm the Intent. The browser never decides the final amount.
 app.post("/make-server-e11bef9e/confirm-payment", async (c) => {
+  let paymentIntentId = "";
+  let paymentMethodType = "unknown";
   try {
     const auth = stripeAuth();
     const body = await c.req.json();
-    const paymentIntentId = typeof body.paymentIntentId === "string" ? body.paymentIntentId : "";
+    paymentIntentId = typeof body.paymentIntentId === "string" ? body.paymentIntentId : "";
     const confirmationTokenId = typeof body.confirmationTokenId === "string" ? body.confirmationTokenId : "";
+    paymentLog("confirmation.function_started", { paymentIntentId, finalize: body.finalize === true });
     if (!paymentIntentId.startsWith("pi_") || !confirmationTokenId.startsWith("ctoken_")) {
       return c.json({ success: false, error: "Invalid payment confirmation." }, 400);
     }
@@ -226,6 +242,7 @@ app.post("/make-server-e11bef9e/confirm-payment", async (c) => {
     const token = await tokenRes.json();
     if (!currentRes.ok || current.error) throw new Error(current.error?.message ?? "Could not load payment.");
     if (!tokenRes.ok || token.error) throw new Error(token.error?.message ?? "Could not verify payment details.");
+    paymentLog("confirmation.status_before", { paymentIntentId, status: current.status });
     if (current.metadata?.programCode !== PROGRAM_CODE || current.currency !== "usd") {
       return c.json({ success: false, error: "Payment does not belong to this program." }, 403);
     }
@@ -241,7 +258,20 @@ app.post("/make-server-e11bef9e/confirm-payment", async (c) => {
       if (current.metadata?.confirmationTokenId !== confirmationTokenId) {
         return c.json({ success: false, error: "Payment is already being confirmed with another method." }, 409);
       }
-      return c.json({ success: true, quote: review.quote, status: current.status, clientSecret: current.client_secret });
+      paymentLog("confirmation.already_started", {
+        paymentIntentId,
+        status: current.status,
+        paymentMethodType: current.metadata?.paymentMethodType ?? "unknown",
+        nextActionType: current.next_action?.type ?? null,
+      });
+      return c.json({
+        success: true,
+        quote: review.quote,
+        status: current.status,
+        clientSecret: current.client_secret,
+        nextActionType: current.next_action?.type ?? null,
+        hostedVerificationUrl: current.next_action?.verify_with_microdeposits?.hosted_verification_url ?? null,
+      });
     }
     const afterAuthentication = current.status === "requires_confirmation" && current.metadata?.confirmationTokenId === confirmationTokenId;
     if (current.status !== "requires_payment_method" && !afterAuthentication) {
@@ -255,7 +285,7 @@ app.post("/make-server-e11bef9e/confirm-payment", async (c) => {
     }
 
     const preview = token.payment_method_preview;
-    const paymentMethodType = preview?.type ?? "unknown";
+    paymentMethodType = preview?.type ?? "unknown";
     if (!["card", "us_bank_account"].includes(paymentMethodType)) {
       return c.json({ success: false, error: "This payment method is not available." }, 400);
     }
@@ -263,6 +293,7 @@ app.post("/make-server-e11bef9e/confirm-payment", async (c) => {
     const quote = paymentQuote(paymentMethodType, cardFunding);
     if (body.finalize !== true) {
       await kv.set(reviewKey, { quote, registrationId: current.metadata.registrationId });
+      paymentLog("confirmation.review_prepared", { paymentIntentId, paymentMethodType, total: quote.total });
       return c.json({ success: true, quote, status: "prepared" });
     }
     if (quote.total !== review.quote.total || review.registrationId !== current.metadata.registrationId) {
@@ -301,9 +332,26 @@ app.post("/make-server-e11bef9e/confirm-payment", async (c) => {
       }
       throw new Error(confirmed.error?.message ?? "Could not confirm payment.");
     }
-    return c.json({ success: true, quote, status: confirmed.status, clientSecret: confirmed.client_secret });
+    paymentLog("confirmation.status_after", {
+      paymentIntentId,
+      status: confirmed.status,
+      paymentMethodType,
+      nextActionType: confirmed.next_action?.type ?? null,
+    });
+    return c.json({
+      success: true,
+      quote,
+      status: confirmed.status,
+      clientSecret: confirmed.client_secret,
+      nextActionType: confirmed.next_action?.type ?? null,
+      hostedVerificationUrl: confirmed.next_action?.verify_with_microdeposits?.hosted_verification_url ?? null,
+    });
   } catch (err) {
-    console.error("Stripe confirmation error:", err);
+    paymentLog("confirmation.error", {
+      paymentIntentId,
+      paymentMethodType,
+      error: (err as Error).message,
+    });
     return c.json({ success: false, error: (err as Error).message }, 500);
   }
 });
@@ -329,7 +377,16 @@ app.post("/make-server-e11bef9e/stripe-webhook", async (c) => {
   if (!event?.id || !event?.type) return c.text("Invalid event", 400);
   if (await kv.get(`stripe-event:${event.id}`)) return c.json({ received: true, duplicate: true });
 
-  const handledTypes = ["payment_intent.succeeded", "payment_intent.payment_failed", "payment_intent.canceled"];
+  const webhookPi = event.data?.object;
+  paymentLog("webhook.received", {
+    eventId: event.id,
+    eventType: event.type,
+    paymentIntentId: webhookPi?.id ?? null,
+    status: webhookPi?.status ?? null,
+    paymentMethodType: webhookPi?.metadata?.paymentMethodType ?? null,
+  });
+
+  const handledTypes = ["payment_intent.processing", "payment_intent.succeeded", "payment_intent.payment_failed", "payment_intent.canceled"];
   if (handledTypes.includes(event.type)) {
     const pi = event.data?.object;
     const registrationId = pi?.metadata?.registrationId || await kv.get(`payment-intent:${pi?.id}`);
@@ -339,7 +396,8 @@ app.post("/make-server-e11bef9e/stripe-webhook", async (c) => {
     const record = await kv.get(registrationKey);
     if (!record) return c.text("Registration not found", 404);
 
-    const status = event.type === "payment_intent.succeeded" ? "paid"
+    const status = event.type === "payment_intent.processing" ? "processing"
+      : event.type === "payment_intent.succeeded" ? "paid"
       : event.type === "payment_intent.payment_failed" ? "failed" : "canceled";
     const updated: Record<string, unknown> = {
       ...record,
@@ -356,6 +414,7 @@ app.post("/make-server-e11bef9e/stripe-webhook", async (c) => {
       updated.cardFunding = pi.metadata?.cardFunding || null;
     }
     await kv.set(registrationKey, updated);
+    paymentLog("webhook.registration_updated", { registrationId, paymentIntentId: pi.id, paymentStatus: status });
   }
 
   await kv.set(`stripe-event:${event.id}`, { type: event.type, processedAt: new Date().toISOString() });

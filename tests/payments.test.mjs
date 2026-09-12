@@ -44,6 +44,7 @@ reset();pi.metadata.programCode='other';assert.equal((await call({finalize:false
 reset();pi.confirmation_method='manual';assert.equal((await call({finalize:false})).status,409);count++;
 reset('card','debit');await call({finalize:false});confirmedStatus='requires_action';await call({finalize:true,expectedTotal:39700});pi.status='requires_confirmation';confirmedStatus='succeeded';assert.equal((await call({finalize:true,expectedTotal:39700})).data.status,'succeeded');assert.equal(mutations.length,3);assert.equal(mutations[2].opts.body,'');count++;
 reset('us_bank_account');await call({finalize:false});confirmedStatus='processing';assert.equal((await call({finalize:true,expectedTotal:38500})).data.status,'processing');count++;
+reset('us_bank_account');await call({finalize:false});confirmedStatus='requires_action';pi.next_action={type:'verify_with_microdeposits',verify_with_microdeposits:{hosted_verification_url:'https://payments.stripe.test/verify'}};let microdeposit=await call({finalize:true,expectedTotal:38500});assert.equal(microdeposit.data.nextActionType,'verify_with_microdeposits');assert.equal(microdeposit.data.hostedVerificationUrl,'https://payments.stripe.test/verify');count++;
 reset();await call({finalize:false});store.set('payment-confirmation:pi_test',{tokenId:'ctoken_other'});assert.equal((await call({finalize:true,expectedTotal:39700})).status,409);assert.equal(mutations.length,0);count++;
 console.log(`${count} payment assertions/scenarios passed; Stripe calls mocked, no real charges.`);
 
