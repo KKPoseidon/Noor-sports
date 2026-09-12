@@ -65,7 +65,7 @@ export function Fall2025() {
                 
                 <div className="flex items-center gap-3 text-white/80">
                   <MapPin className="w-5 h-5 text-[#00BFFF]" />
-                  <span className="text-xl">7050 Eckstrom Ave, San Diego, CA 92111</span>
+                  <span className="text-xl">Lindbergh Park, 4141 Ashford St, San Diego, CA 92111</span>
                 </div>
               </div>
               
@@ -74,7 +74,7 @@ export function Fall2025() {
               </div>
               
               <p className="text-xl text-white/80 leading-relaxed">
-                An exciting season of soccer development at Bright Horizon Academy. Our fall program combines professional training methods with a fun, supportive environment perfect for young learners.
+                Our past program brought young athletes together for a season filled with excitement, skill-building, teamwork, and memorable moments on the field.
               </p>
             </div>
           </motion.div>
